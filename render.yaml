@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: steamcoin-backend
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: STEAM_APP_ID
+        value: "3463540"
+      - key: STEAM_COIN_ITEMDEF_ID
+        value: "1013"
+      - key: STEAM_CHEST_ITEMDEF_ID
+        value: "2001"
+      - key: TOTAL_COINS_GOAL
+        value: "24000000"
+      - key: SESSION_TIMEOUT_MS
+        value: "120000"
+      - key: POWERUP_DURATION_MS
+        value: "86400000"
+      - key: PRIMARY_TIMER_MS
+        value: "3600000"
+      - key: OLD_CLOCK_TIMER_MS
+        value: "7200000"
+      - key: STEAM_PUBLISHER_KEY
+        sync: false

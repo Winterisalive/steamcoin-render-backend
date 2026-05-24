@@ -239,6 +239,10 @@ function requestIdFromRound(roundId) {
   return (value === 0n ? 1n : value).toString();
 }
 
+function requestIdFromRoundAndIndex(roundId, index) {
+  return requestIdFromRound(`${roundId}:${index}`);
+}
+
 function requireAuthConfig() {
   if (!STEAM_PUBLISHER_KEY) {
     throw new Error("STEAM_PUBLISHER_KEY is missing");
@@ -278,35 +282,37 @@ async function authenticateSteamTicket(ticket, identity) {
 }
 
 async function addSteamCoinItems({ steamId, coinAmount, requestId }) {
-  const body = new URLSearchParams();
-  body.set("key", STEAM_PUBLISHER_KEY);
-  body.set("appid", STEAM_APP_ID);
-  body.set("steamid", steamId);
-  body.set("itempropsjson", "{}");
-  body.set("notify", "0");
-  body.set("requestid", requestId);
+  const grants = [];
 
   for (let index = 0; index < coinAmount; index++) {
-    body.set(`itemdefid[${index}]`, STEAM_COIN_ITEMDEF_ID);
+    const body = new URLSearchParams();
+    body.set("key", STEAM_PUBLISHER_KEY);
+    body.set("appid", STEAM_APP_ID);
+    body.set("steamid", steamId);
+    body.set("itemdefid", STEAM_COIN_ITEMDEF_ID);
+    body.set("notify", "1");
+    body.set("requestid", requestIdFromRoundAndIndex(requestId, index));
+
+    const response = await fetch(`${STEAM_API_BASE}/IInventoryService/AddPromoItem/v1/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body
+    });
+
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(`AddPromoItem HTTP ${response.status}: ${text}`);
+    }
+
+    const payload = JSON.parse(text);
+    if (payload?.response?.success === false) {
+      throw new Error(`AddPromoItem failed: ${payload.response.error || text}`);
+    }
+
+    grants.push(payload);
   }
 
-  const response = await fetch(`${STEAM_API_BASE}/IInventoryService/AddItem/v1/`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body
-  });
-
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(`AddItem HTTP ${response.status}: ${text}`);
-  }
-
-  const payload = JSON.parse(text);
-  if (payload?.response?.success === false) {
-    throw new Error(`AddItem failed: ${payload.response.error || text}`);
-  }
-
-  return payload;
+  return grants;
 }
 
 function getPlayer(state, steamId) {
@@ -855,7 +861,7 @@ async function handleGrant(request, response) {
     coinAmount,
     globalCoins: state.globalCoins,
     totalCoinsGoal: TOTAL_COINS_GOAL,
-    message: grantMode === "session" ? "steam-additem-ok" : "steam-additem-legacy-ok"
+    message: grantMode === "session" ? "steam-addpromo-ok" : "steam-addpromo-legacy-ok"
   });
 }
 

@@ -15,6 +15,7 @@ const SESSION_TIMEOUT_MS = Number(process.env.SESSION_TIMEOUT_MS || 120000);
 const POWERUP_DURATION_MS = Number(process.env.POWERUP_DURATION_MS || 24 * 60 * 60 * 1000);
 const PRIMARY_TIMER_MS = Number(process.env.PRIMARY_TIMER_MS || 60000);
 const OLD_CLOCK_TIMER_MS = Number(process.env.OLD_CLOCK_TIMER_MS || 120000);
+const GRANT_GRACE_MS = 5000;
 const SESSION_HISTORY_LIMIT = 20;
 const STATE_VERSION = 2;
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, "data.json");
@@ -337,6 +338,28 @@ function getActiveSessionRef(state, steamId) {
   return { player, session, steamId, tokenHash: session.tokenHash };
 }
 
+function resolveGrantSessionRef(state, steamId, sessionToken) {
+  const normalizedSessionToken = typeof sessionToken === "string" ? sessionToken.trim() : "";
+  if (normalizedSessionToken) {
+    const tokenHash = hashToken(normalizedSessionToken);
+    const entry = state.sessionsByTokenHash[tokenHash];
+    if (entry) {
+      const player = state.players[entry.steamId];
+      const session = player?.currentSession;
+      if (session?.active && session.sessionId === entry.sessionId && session.tokenHash === tokenHash) {
+        return { player, session, steamId: entry.steamId, tokenHash, source: "session-token" };
+      }
+    }
+  }
+
+  const activeSession = getActiveSessionRef(state, steamId);
+  if (activeSession) {
+    return { ...activeSession, source: "active-session-fallback" };
+  }
+
+  return null;
+}
+
 function flushSessionProgress(player, atMs) {
   const session = player.currentSession;
   if (!session?.active) {
@@ -415,7 +438,7 @@ async function sweepExpiredSessions(state, atMs) {
       continue;
     }
 
-    if (atMs - Number(session.lastHeartbeatAt || session.startedAt || atMs) > SESSION_TIMEOUT_MS) {
+    if (atMs - Number(session.lastHeartbeatAt || session.startedAt || atMs) > SESSION_TIMEOUT_MS + GRANT_GRACE_MS) {
       finalizeSession(state, steamId, atMs, "timeout");
       changed = true;
     }
@@ -619,7 +642,7 @@ async function handleSessionHeartbeat(request, response) {
   syncTimerUnlocksFromPayload(player, payload);
   syncPowerupsFromPayload(player, payload, atMs);
 
-  if (atMs - Number(session.lastHeartbeatAt || session.startedAt || atMs) > SESSION_TIMEOUT_MS) {
+  if (atMs - Number(session.lastHeartbeatAt || session.startedAt || atMs) > SESSION_TIMEOUT_MS + GRANT_GRACE_MS) {
     finalizeSession(state, entry.steamId, atMs, "timeout");
     await writeState(state);
     sendJson(response, 409, { ok: false, message: "session-expired" });
@@ -716,29 +739,13 @@ async function handleGrant(request, response) {
     return;
   }
 
-  const activeSession = getActiveSessionRef(state, steamId);
   let coinAmount = payload.coinAmount;
   let timerIndex = payload.timerIndex;
   let grantMode = "legacy";
   let sessionId = null;
 
-  if (payload.sessionToken || activeSession) {
-    const sessionToken = payload.sessionToken || null;
-    const sessionRef = sessionToken ? (() => {
-      const tokenHash = hashToken(sessionToken);
-      const entry = state.sessionsByTokenHash[tokenHash];
-      if (!entry) {
-        return null;
-      }
-
-      const player = state.players[entry.steamId];
-      const session = player?.currentSession;
-      if (!session?.active || session.sessionId !== entry.sessionId || session.tokenHash !== tokenHash) {
-        return null;
-      }
-
-      return { steamId: entry.steamId, player, session, tokenHash };
-    })() : activeSession;
+  if (payload.sessionToken || getActiveSessionRef(state, steamId)) {
+    const sessionRef = resolveGrantSessionRef(state, steamId, payload.sessionToken);
 
     if (!sessionRef) {
       sendJson(response, 401, { ok: false, message: "invalid-session-token" });
@@ -754,7 +761,7 @@ async function handleGrant(request, response) {
     const session = sessionRef.session;
     syncTimerUnlocksFromPayload(player, payload);
     syncPowerupsFromPayload(player, payload, atMs);
-    if (atMs - Number(session.lastHeartbeatAt || session.startedAt || atMs) > SESSION_TIMEOUT_MS) {
+    if (atMs - Number(session.lastHeartbeatAt || session.startedAt || atMs) > SESSION_TIMEOUT_MS + GRANT_GRACE_MS) {
       finalizeSession(state, steamId, atMs, "timeout");
       await writeState(state);
       sendJson(response, 409, { ok: false, message: "session-expired" });
@@ -770,14 +777,15 @@ async function handleGrant(request, response) {
     }
 
     const durationMs = getTimerDuration(timerIndex);
-    if (timer.accumulatedMs < durationMs) {
+    if (timer.accumulatedMs + GRANT_GRACE_MS < durationMs) {
       sendJson(response, 409, {
         ok: false,
         message: "timer-not-ready",
         timerIndex,
         accumulatedMs: timer.accumulatedMs,
         durationMs,
-        remainingMs: Math.max(0, durationMs - timer.accumulatedMs)
+        remainingMs: Math.max(0, durationMs - timer.accumulatedMs),
+        graceMs: GRANT_GRACE_MS
       });
       return;
     }

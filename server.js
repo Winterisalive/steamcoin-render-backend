@@ -13,8 +13,17 @@ const STEAM_APP_ID = process.env.STEAM_APP_ID || "3463540";
 const TOTAL_COINS_GOAL = Number(process.env.TOTAL_COINS_GOAL || 24000000);
 const SESSION_TIMEOUT_MS = Number(process.env.SESSION_TIMEOUT_MS || 120000);
 const POWERUP_DURATION_MS = Number(process.env.POWERUP_DURATION_MS || 24 * 60 * 60 * 1000);
-const PRIMARY_TIMER_MS = Number(process.env.PRIMARY_TIMER_MS || 60000);
-const OLD_CLOCK_TIMER_MS = Number(process.env.OLD_CLOCK_TIMER_MS || 120000);
+function clampTestTimerMs(rawValue, fallbackMs) {
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallbackMs;
+  }
+
+  return Math.min(parsed, fallbackMs);
+}
+
+const PRIMARY_TIMER_MS = clampTestTimerMs(process.env.PRIMARY_TIMER_MS, 60000);
+const OLD_CLOCK_TIMER_MS = clampTestTimerMs(process.env.OLD_CLOCK_TIMER_MS, 120000);
 const GRANT_GRACE_MS = 5000;
 const SESSION_HISTORY_LIMIT = 20;
 const STATE_VERSION = 2;

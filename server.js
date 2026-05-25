@@ -10,12 +10,11 @@ const PORT = Number(process.env.PORT || 8787);
 const STEAM_API_BASE = process.env.STEAM_API_BASE || "https://partner.steam-api.com";
 const STEAM_PUBLISHER_KEY = process.env.STEAM_PUBLISHER_KEY || process.env.STEAM_WEB_API_KEY || "";
 const STEAM_APP_ID = process.env.STEAM_APP_ID || "3463540";
-const STEAM_COIN_ITEMDEF_ID = process.env.STEAM_COIN_ITEMDEF_ID || "";
 const TOTAL_COINS_GOAL = Number(process.env.TOTAL_COINS_GOAL || 24000000);
 const SESSION_TIMEOUT_MS = Number(process.env.SESSION_TIMEOUT_MS || 120000);
 const POWERUP_DURATION_MS = Number(process.env.POWERUP_DURATION_MS || 24 * 60 * 60 * 1000);
-const PRIMARY_TIMER_MS = Number(process.env.PRIMARY_TIMER_MS || 3600000);
-const OLD_CLOCK_TIMER_MS = Number(process.env.OLD_CLOCK_TIMER_MS || 7200000);
+const PRIMARY_TIMER_MS = Number(process.env.PRIMARY_TIMER_MS || 60000);
+const OLD_CLOCK_TIMER_MS = Number(process.env.OLD_CLOCK_TIMER_MS || 120000);
 const SESSION_HISTORY_LIMIT = 20;
 const STATE_VERSION = 2;
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, "data.json");
@@ -251,10 +250,6 @@ function requireAuthConfig() {
 
 function requireGrantConfig() {
   requireAuthConfig();
-
-  if (!STEAM_COIN_ITEMDEF_ID) {
-    throw new Error("STEAM_COIN_ITEMDEF_ID is missing");
-  }
 }
 
 async function authenticateSteamTicket(ticket, identity) {
@@ -279,40 +274,6 @@ async function authenticateSteamTicket(ticket, identity) {
   }
 
   return steamId;
-}
-
-async function addSteamCoinItems({ steamId, coinAmount, requestId }) {
-  const grants = [];
-
-  for (let index = 0; index < coinAmount; index++) {
-    const body = new URLSearchParams();
-    body.set("key", STEAM_PUBLISHER_KEY);
-    body.set("appid", STEAM_APP_ID);
-    body.set("steamid", steamId);
-    body.set("itemdefid", STEAM_COIN_ITEMDEF_ID);
-    body.set("notify", "1");
-    body.set("requestid", requestIdFromRoundAndIndex(requestId, index));
-
-    const response = await fetch(`${STEAM_API_BASE}/IInventoryService/AddPromoItem/v1/`, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body
-    });
-
-    const text = await response.text();
-    if (!response.ok) {
-      throw new Error(`AddPromoItem HTTP ${response.status}: ${text}`);
-    }
-
-    const payload = JSON.parse(text);
-    if (payload?.response?.success === false) {
-      throw new Error(`AddPromoItem failed: ${payload.response.error || text}`);
-    }
-
-    grants.push(payload);
-  }
-
-  return grants;
 }
 
 function getPlayer(state, steamId) {
@@ -836,19 +797,12 @@ async function handleGrant(request, response) {
     return;
   }
 
-  const requestId = requestIdFromRound(payload.roundId);
-  await addSteamCoinItems({
-    steamId,
-    coinAmount,
-    requestId
-  });
-
   state.globalCoins = Math.min(TOTAL_COINS_GOAL, state.globalCoins + coinAmount);
   state.grants[payload.roundId] = {
     steamId,
     timerIndex,
     coinAmount,
-    requestId,
+    requestId: requestIdFromRound(payload.roundId),
     sessionId,
     grantMode,
     grantedAt: toIso(atMs)
@@ -861,7 +815,7 @@ async function handleGrant(request, response) {
     coinAmount,
     globalCoins: state.globalCoins,
     totalCoinsGoal: TOTAL_COINS_GOAL,
-    message: grantMode === "session" ? "steam-addpromo-ok" : "steam-addpromo-legacy-ok"
+    message: grantMode === "session" ? "grant-validated-ok" : "grant-validated-legacy-ok"
   });
 }
 
